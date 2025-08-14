@@ -14,6 +14,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Memuat plugin Datalabels untuk Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <!-- BARU: Memuat JSZip untuk membuat file ZIP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         /* Style tambahan untuk tampilan yang lebih baik */
         #messageBox, #debugArea, #dashboardArea, #resultsArea, #summaryArea, #filterArea {
@@ -78,20 +80,22 @@
                     <!-- Cards will be generated here -->
                 </div>
                 <!-- Area Filter -->
-                <div id="filterArea" class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
-                    <div>
+                <div id="filterArea" class="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg">
+                    <div class="md:col-span-2">
                         <label for="employeeFilter" class="block text-sm font-medium text-gray-700">Pilih Karyawan (Ctrl+Klik)</label>
                         <select id="employeeFilter" multiple class="mt-1 block w-full h-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                            <!-- Options will be populated by JavaScript -->
+                        </select>
+                    </div>
+                    <div>
+                        <label for="departmentFilter" class="block text-sm font-medium text-gray-700">Pilih Departemen</label>
+                         <select id="departmentFilter" multiple class="mt-1 block w-full h-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
                         </select>
                     </div>
                     <div>
                         <label for="startDateFilter" class="block text-sm font-medium text-gray-700">Dari Tanggal</label>
-                        <input type="date" id="startDateFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                    </div>
-                    <div>
+                        <input type="date" id="startDateFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm mb-4">
                         <label for="endDateFilter" class="block text-sm font-medium text-gray-700">Sampai Tanggal</label>
-                        <input type="date" id="endDateFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
+                        <input type="date" id="endDateFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
                     </div>
                 </div>
             </div>
@@ -136,7 +140,7 @@
                 <div id="resultsArea">
                      <div class="flex justify-between items-center mb-4">
                         <h3 class="text-lg font-bold text-gray-800">Laporan Detail Harian</h3>
-                        <button id="exportDetailButton" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 text-sm">Ekspor Detail</button>
+                        <button id="exportDetailButton" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 text-sm">Ekspor Detail per Dept (ZIP)</button>
                     </div>
                     <div class="overflow-auto max-h-96">
                         <table class="min-w-full bg-white border-gray-200">
@@ -187,6 +191,7 @@
         const expDetBtn = document.getElementById('exportDetailButton');
         const expSumBtn = document.getElementById('exportSummaryButton');
         const empFilter = document.getElementById('employeeFilter');
+        const deptFilter = document.getElementById('departmentFilter');
         const startFilter = document.getElementById('startDateFilter');
         const endFilter = document.getElementById('endDateFilter');
         const chartCanvas = document.getElementById('attendanceChart');
@@ -226,7 +231,7 @@
             return date;
         }
         procBtn.addEventListener('click', handleProcData);
-        [empFilter, startFilter, endFilter].forEach(el => {
+        [empFilter, deptFilter, startFilter, endFilter].forEach(el => {
             el.addEventListener('change', () => applyFilters());
         });
         expDetBtn.addEventListener('click', () => exportCSV(true));
@@ -252,7 +257,6 @@
                     showMsg('File data mentah kosong atau tidak valid.', 'error');
                     return;
                 }
-                // DIPERBARUI: Menghapus .sort() untuk mempertahankan urutan asli
                 const origEmpNames = [...new Set(empListData.map(name => String(name).trim()))];
                 popEmpFilter(origEmpNames);
                 const attendance = new Map();
@@ -260,6 +264,8 @@
                 let numericOrEmpty = 0;
                 const allDates = new Set();
                 const empDepts = new Map();
+                const allDepts = new Set();
+
                 for (let i = 1; i < rawFpData.length; i++) {
                     const row = rawFpData[i];
                     if (row.length < 5) continue;
@@ -273,6 +279,7 @@
                     }
                     if (!dateStr || !timeStr) continue;
                     allDates.add(dateStr);
+                    if(dept !== 'N/A') allDepts.add(dept);
                     
                     let matchedFullName = null;
                     const shortNameLower = shortNameRaw.toLowerCase();
@@ -281,21 +288,12 @@
                     for (const fullName of origEmpNames) {
                         const fullNameLower = fullName.toLowerCase();
                         let currentScore = 0;
-
                         const shortNameFirstWord = shortNameLower.split(' ')[0];
                         const fullNameFirstWord = fullNameLower.split(' ')[0];
-
-                        if (fullNameLower === shortNameLower) {
-                            currentScore = 100;
-                        } else if (fullNameFirstWord === shortNameFirstWord) {
-                            currentScore = 90;
-                        } else if (fullNameLower.includes(shortNameLower)) {
-                            currentScore = 80;
-                        }
-                        
-                        if (currentScore > bestMatch.score) {
-                            bestMatch = { name: fullName, score: currentScore };
-                        }
+                        if (fullNameLower === shortNameLower) currentScore = 100;
+                        else if (fullNameFirstWord === shortNameFirstWord) currentScore = 90;
+                        else if (fullNameLower.includes(shortNameLower)) currentScore = 80;
+                        if (currentScore > bestMatch.score) bestMatch = { name: fullName, score: currentScore };
                     }
                     matchedFullName = bestMatch.name;
 
@@ -311,35 +309,20 @@
                         let shiftName = (firstIn >= '11:00') ? 'Shift Siang' : 'Pagi';
                         const rule = shiftRules[shiftName];
                         let status = '';
-                        if (firstIn === lastOut) {
-                            status = 'Hanya 1x Scan';
-                        } else if (new Date(`1970-01-01T${lastOut}:00`) < new Date(`1970-01-01T${rule.jamKeluarIdeal}:00`)) {
-                            status = 'Pulang Cepat';
-                        } else if ((shiftName === 'Pagi' || shiftName === 'Shift Siang') && (new Date(`1970-01-01T${lastOut}:00`) - new Date(`1970-01-01T${rule.jamKeluarIdeal}:00`) >= 30 * 60 * 1000)) {
-                            status = 'Loyalitas';
-                        } else if (firstIn > rule.jamMasukIdeal) {
-                            status = 'Terlambat';
-                        } else {
-                            status = 'Tepat Waktu';
-                        }
+                        if (firstIn === lastOut) status = 'Hanya 1x Scan';
+                        else if (new Date(`1970-01-01T${lastOut}:00`) < new Date(`1970-01-01T${rule.jamKeluarIdeal}:00`)) status = 'Pulang Cepat';
+                        else if ((shiftName === 'Pagi' || shiftName === 'Shift Siang') && (new Date(`1970-01-01T${lastOut}:00`) - new Date(`1970-01-01T${rule.jamKeluarIdeal}:00`) >= 30 * 60 * 1000)) status = 'Loyalitas';
+                        else if (firstIn > rule.jamMasukIdeal) status = 'Terlambat';
+                        else status = 'Tepat Waktu';
                         const dateObj = parseDt(dateStr);
-                        const dayName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('id-ID', {
-                            weekday: 'long'
-                        }) : 'Invalid';
-                        attendance.set(key, {
-                            name: matchedFullName,
-                            department: dept,
-                            day: dayName,
-                            date: dateStr,
-                            shift: shiftName,
-                            firstIn,
-                            lastOut,
-                            status
-                        });
+                        const dayName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('id-ID', { weekday: 'long' }) : 'Invalid';
+                        attendance.set(key, { name: matchedFullName, department: dept, day: dayName, date: dateStr, shift: shiftName, firstIn, lastOut, status });
                     } else {
                         unmatched.add(shortNameRaw);
                     }
                 }
+                
+                popDeptFilter(Array.from(allDepts).sort());
                 const procData = Array.from(attendance.values());
                 const datesInRange = Array.from(allDates);
                 origEmpNames.forEach(empName => {
@@ -347,23 +330,11 @@
                         const key = `${empName.toLowerCase()}-${dateStr}`;
                         if (!attendance.has(key)) {
                             const dateObj = parseDt(dateStr);
-                            const dayName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('id-ID', {
-                                weekday: 'long'
-                            }) : 'Invalid';
-                            procData.push({
-                                name: empName,
-                                department: empDepts.get(empName) || 'N/A',
-                                day: dayName,
-                                date: dateStr,
-                                shift: '-',
-                                firstIn: '-',
-                                lastOut: '-',
-                                status: 'Off'
-                            });
+                            const dayName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('id-ID', { weekday: 'long' }) : 'Invalid';
+                            procData.push({ name: empName, department: empDepts.get(empName) || 'N/A', day: dayName, date: dateStr, shift: '-', firstIn: '-', lastOut: '-', status: 'Off' });
                         }
                     });
                 });
-                // DIPERBARUI: Mengurutkan berdasarkan urutan daftar nama, lalu tanggal
                 allData = procData.sort((a, b) => {
                     const indexA = origEmpNames.indexOf(a.name);
                     const indexB = origEmpNames.indexOf(b.name);
@@ -395,17 +366,29 @@
                 empFilter.appendChild(option);
             });
         }
+        
+        function popDeptFilter(deptList) {
+            deptFilter.innerHTML = '<option value="semua" selected>Semua Departemen</option>';
+            deptList.forEach(dept => {
+                const option = document.createElement('option');
+                option.value = dept;
+                option.textContent = dept;
+                deptFilter.appendChild(option);
+            });
+        }
 
         function applyFilters() {
-            const selOpts = Array.from(empFilter.selectedOptions).map(opt => opt.value);
+            const selEmps = Array.from(empFilter.selectedOptions).map(opt => opt.value);
+            const selDepts = Array.from(deptFilter.selectedOptions).map(opt => opt.value);
             const startDate = startFilter.value;
             const endDate = endFilter.value;
             let filtData = allData.filter(item => {
-                const nameMatch = selOpts.includes('semua') || selOpts.length === 0 || selOpts.includes(item.name);
+                const nameMatch = selEmps.includes('semua') || selEmps.length === 0 || selEmps.includes(item.name);
+                const deptMatch = selDepts.includes('semua') || selDepts.length === 0 || selDepts.includes(item.department);
                 const itemDate = parseDt(item.date);
                 const startMatch = !startDate || itemDate >= new Date(startDate);
                 const endMatch = !endDate || itemDate <= new Date(endDate);
-                return nameMatch && startMatch && endMatch;
+                return nameMatch && deptMatch && startMatch && endMatch;
             });
             const sumData = procSumData(filtData);
             dispResults(filtData);
@@ -419,44 +402,22 @@
             filtDetData.forEach(data => {
                 if (!sumMap.has(data.name)) {
                     sumMap.set(data.name, {
-                        department: data.department,
-                        totalMasuk: 0,
-                        off: 0,
-                        tepatWaktu: 0,
-                        terlambat: 0,
-                        pulangCepat: 0,
-                        loyalitas: 0,
+                        department: data.department, totalMasuk: 0, off: 0, tepatWaktu: 0,
+                        terlambat: 0, pulangCepat: 0, loyalitas: 0,
                     });
                 }
                 const summary = sumMap.get(data.name);
-                if (data.status !== 'Off') {
-                    summary.totalMasuk++;
-                }
+                if (data.status !== 'Off') summary.totalMasuk++;
                 switch (data.status) {
-                    case 'Tepat Waktu':
-                        summary.tepatWaktu++;
-                        break;
-                    case 'Terlambat':
-                        summary.terlambat++;
-                        break;
-                    case 'Pulang Cepat':
-                        summary.pulangCepat++;
-                        break;
-                    case 'Loyalitas':
-                        summary.loyalitas++;
-                        break;
-                    case 'Off':
-                        summary.off++;
-                        break;
+                    case 'Tepat Waktu': summary.tepatWaktu++; break;
+                    case 'Terlambat': summary.terlambat++; break;
+                    case 'Pulang Cepat': summary.pulangCepat++; break;
+                    case 'Loyalitas': summary.loyalitas++; break;
+                    case 'Off': summary.off++; break;
                 }
             });
-            // DIPERBARUI: Mengurutkan ringkasan sesuai urutan daftar nama
-            const sortedSummary = Array.from(sumMap.entries()).sort((a, b) => {
-                const originalOrder = Array.from(document.querySelectorAll('#employeeFilter option')).map(opt => opt.value);
-                return originalOrder.indexOf(a[0]) - originalOrder.indexOf(b[0]);
-            }).map(([name, data]) => ({ name, ...data }));
-
-            return sortedSummary;
+            const originalOrder = Array.from(document.querySelectorAll('#employeeFilter option')).map(opt => opt.value);
+            return Array.from(sumMap.entries()).sort((a, b) => originalOrder.indexOf(a[0]) - originalOrder.indexOf(b[0])).map(([name, data]) => ({ name, ...data }));
         }
 
         function updDashCards(sumData) {
@@ -480,12 +441,8 @@
             resTblBody.innerHTML = '';
             detData.forEach(data => {
                 const statusClasses = {
-                    'Hanya 1x Scan': 'text-gray-600',
-                    'Tepat Waktu': 'text-green-600',
-                    'Terlambat': 'text-red-600',
-                    'Pulang Cepat': 'text-yellow-600',
-                    'Loyalitas': 'text-purple-600 font-semibold',
-                    'Off': 'text-blue-600'
+                    'Hanya 1x Scan': 'text-gray-600', 'Tepat Waktu': 'text-green-600', 'Terlambat': 'text-red-600',
+                    'Pulang Cepat': 'text-yellow-600', 'Loyalitas': 'text-purple-600 font-semibold', 'Off': 'text-blue-600'
                 };
                 const row = document.createElement('tr');
                 row.innerHTML = `<td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${data.name}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.department}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.day}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.date}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.shift}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.firstIn}</td><td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${data.lastOut}</td><td class="px-4 py-2 whitespace-nowrap text-sm ${statusClasses[data.status] || ''}">${data.status}</td>`;
@@ -495,9 +452,7 @@
         Chart.register(ChartDataLabels);
 
         function drawChart(sumData) {
-            if (chartInst) {
-                chartInst.destroy();
-            }
+            if (chartInst) chartInst.destroy();
             const totalTW = sumData.reduce((acc, cur) => acc + cur.tepatWaktu, 0);
             const totalT = sumData.reduce((acc, cur) => acc + cur.terlambat, 0);
             const totalPC = sumData.reduce((acc, cur) => acc + cur.pulangCepat, 0);
@@ -517,24 +472,10 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    },
+                    scales: { y: { beginAtZero: true } },
                     plugins: {
-                        legend: {
-                            display: false
-                        },
-                        datalabels: {
-                            anchor: 'end',
-                            align: 'top',
-                            formatter: Math.round,
-                            font: {
-                                weight: 'bold'
-                            },
-                            color: '#4A5568'
-                        }
+                        legend: { display: false },
+                        datalabels: { anchor: 'end', align: 'top', formatter: Math.round, font: { weight: 'bold' }, color: '#4A5568' }
                     }
                 }
             });
@@ -545,54 +486,73 @@
             logContent += `• Total nama unik di daftar nama: ${listTotal}\n`;
             logContent += `• Total baris berhasil diproses (termasuk Off): ${processed}\n\n`;
             if (numeric > 0) logContent += `📌 Ditemukan ${numeric} baris dilewati karena 'Nama' berisi angka/kosong.\n\n`;
-            if (unmatched.size > 0) {
-                logContent += '📌 Nama berikut tidak cocok dengan daftar nama Anda:\n' + Array.from(unmatched).join(', ');
-            } else if (processed === 0 && rawTotal > 0) {
-                logContent += '📌 Tidak ada nama yang cocok. Pastikan kedua file berisi nama yang sama.';
-            }
+            if (unmatched.size > 0) logContent += '📌 Nama berikut tidak cocok dengan daftar nama Anda:\n' + Array.from(unmatched).join(', ');
+            else if (processed === 0 && rawTotal > 0) logContent += '📌 Tidak ada nama yang cocok. Pastikan kedua file berisi nama yang sama.';
             dbgLog.textContent = logContent;
             dbgArea.classList.remove('hidden');
         }
 
-        function exportCSV(isDetail) {
-            let dataToExport, headers, filename;
-            const selOpts = Array.from(empFilter.selectedOptions).map(opt => opt.value);
+        async function exportCSV(isDetail) {
+            showMsg('Mempersiapkan file ZIP...', 'info');
+            const selEmps = Array.from(empFilter.selectedOptions).map(opt => opt.value);
+            const selDepts = Array.from(deptFilter.selectedOptions).map(opt => opt.value);
             const startDate = startFilter.value;
             const endDate = endFilter.value;
+
             let baseData = allData.filter(item => {
-                const nameMatch = selOpts.includes('semua') || selOpts.length === 0 || selOpts.includes(item.name);
+                const nameMatch = selEmps.includes('semua') || selEmps.length === 0 || selEmps.includes(item.name);
+                const deptMatch = selDepts.includes('semua') || selDepts.length === 0 || selDepts.includes(item.department);
                 const itemDate = parseDt(item.date);
                 const startMatch = !startDate || itemDate >= new Date(startDate);
                 const endMatch = !endDate || itemDate <= new Date(endDate);
-                return nameMatch && startMatch && endMatch;
+                return nameMatch && deptMatch && startMatch && endMatch;
             });
+            
             if (isDetail) {
-                dataToExport = baseData;
-                headers = ['name', 'department', 'day', 'date', 'shift', 'firstIn', 'lastOut', 'status'];
-                filename = 'laporan_detail_harian.csv';
-            } else {
-                dataToExport = procSumData(baseData);
-                headers = ['name', 'department', 'totalMasuk', 'off', 'tepatWaktu', 'terlambat', 'pulangCepat', 'loyalitas'];
-                filename = 'laporan_ringkasan_karyawan.csv';
-            }
-            const csvRows = [];
-            csvRows.push(headers.join(','));
-            for (const row of dataToExport) {
-                const values = headers.map(header => `"${(row[header] || '').toString().replace(/"/g, '""')}"`);
-                csvRows.push(values.join(','));
-            }
-            const blob = new Blob([csvRows.join('\n')], {
-                type: 'text/csv;charset=utf-8;'
-            });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.setAttribute('href', url);
-            a.setAttribute('download', filename);
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
+                const zip = new JSZip();
+                const dataByDept = {};
+                baseData.forEach(row => {
+                    if (!dataByDept[row.department]) dataByDept[row.department] = [];
+                    dataByDept[row.department].push(row);
+                });
 
+                for (const dept in dataByDept) {
+                    const headers = ['name', 'department', 'day', 'date', 'shift', 'firstIn', 'lastOut', 'status'];
+                    let csvContent = headers.join(',') + '\n';
+                    dataByDept[dept].forEach(row => {
+                        csvContent += headers.map(header => `"${(row[header] || '').toString().replace(/"/g, '""')}"`).join(',') + '\n';
+                    });
+                    zip.file(`laporan_${dept.replace(/ /g, '_')}.csv`, csvContent);
+                }
+                
+                const content = await zip.generateAsync({ type: "blob" });
+                const url = window.URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'laporan_detail_per_departemen.zip';
+                a.click();
+                window.URL.revokeObjectURL(url);
+                showMsg('File ZIP berhasil diunduh!', 'success');
+
+            } else {
+                const dataToExport = procSumData(baseData);
+                const headers = ['name', 'department', 'totalMasuk', 'off', 'tepatWaktu', 'terlambat', 'pulangCepat', 'loyalitas'];
+                const filename = 'laporan_ringkasan_karyawan.csv';
+                const csvRows = [headers.join(',')];
+                for (const row of dataToExport) {
+                    csvRows.push(headers.map(header => `"${(row[header] || '').toString().replace(/"/g, '""')}"`).join(','));
+                }
+                const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.setAttribute('href', url);
+                a.setAttribute('download', filename);
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+        }
+        
         function procFile(file, isRaw) {
             return new Promise((resolve, reject) => {
                 const fName = file.name.toLowerCase();
@@ -608,16 +568,10 @@
                     reader.onload = (e) => {
                         try {
                             const data = e.target.result;
-                            const workbook = XLSX.read(data, {
-                                type: 'array'
-                            });
+                            const workbook = XLSX.read(data, { type: 'array' });
                             const firstSheet = workbook.SheetNames[0];
                             const worksheet = workbook.Sheets[firstSheet];
-                            const aoaData = XLSX.utils.sheet_to_json(worksheet, {
-                                header: 1,
-                                raw: false,
-                                dateNF: 'mm/dd/yyyy'
-                            });
+                            const aoaData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'mm/dd/yyyy' });
                             resolve(isRaw ? aoaData : aoaData.flat().filter(Boolean));
                         } catch (err) {
                             reject(err);
