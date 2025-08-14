@@ -252,9 +252,9 @@
                     showMsg('File data mentah kosong atau tidak valid.', 'error');
                     return;
                 }
-                const origEmpNames = [...new Set(empListData.map(name => String(name).trim()))].sort();
+                // DIPERBARUI: Menghapus .sort() untuk mempertahankan urutan asli
+                const origEmpNames = [...new Set(empListData.map(name => String(name).trim()))];
                 popEmpFilter(origEmpNames);
-                const empNameSet = new Set(origEmpNames.map(name => name.toLowerCase()));
                 const attendance = new Map();
                 const unmatched = new Set();
                 let numericOrEmpty = 0;
@@ -263,26 +263,51 @@
                 for (let i = 1; i < rawFpData.length; i++) {
                     const row = rawFpData[i];
                     if (row.length < 5) continue;
-                    const origName = row[1] ? String(row[1]).trim() : '';
+                    const shortNameRaw = row[1] ? String(row[1]).trim() : '';
                     const dept = row[2] ? String(row[2]).trim() : 'N/A';
                     const dateStr = row[3];
                     const timeStr = row[4];
-                    if (!origName || !isNaN(origName)) {
+                    if (!shortNameRaw || !isNaN(shortNameRaw)) {
                         numericOrEmpty++;
                         continue;
                     }
-                    const name = origName.toLowerCase();
                     if (!dateStr || !timeStr) continue;
                     allDates.add(dateStr);
-                    if (!empDepts.has(origName) && dept !== 'N/A') {
-                        empDepts.set(origName, dept);
+                    
+                    let matchedFullName = null;
+                    const shortNameLower = shortNameRaw.toLowerCase();
+                    
+                    let bestMatch = { name: null, score: 0 };
+                    for (const fullName of origEmpNames) {
+                        const fullNameLower = fullName.toLowerCase();
+                        let currentScore = 0;
+
+                        const shortNameFirstWord = shortNameLower.split(' ')[0];
+                        const fullNameFirstWord = fullNameLower.split(' ')[0];
+
+                        if (fullNameLower === shortNameLower) {
+                            currentScore = 100;
+                        } else if (fullNameFirstWord === shortNameFirstWord) {
+                            currentScore = 90;
+                        } else if (fullNameLower.includes(shortNameLower)) {
+                            currentScore = 80;
+                        }
+                        
+                        if (currentScore > bestMatch.score) {
+                            bestMatch = { name: fullName, score: currentScore };
+                        }
                     }
-                    if (empNameSet.has(name)) {
+                    matchedFullName = bestMatch.name;
+
+                    if (matchedFullName) {
+                         if (!empDepts.has(matchedFullName) && dept !== 'N/A') {
+                            empDepts.set(matchedFullName, dept);
+                        }
                         const times = String(timeStr).match(/\d{2}:\d{2}/g) || [];
                         if (times.length === 0) continue;
                         const firstIn = times.reduce((a, b) => (b < a ? b : a));
                         const lastOut = times.length > 1 ? times.reduce((a, b) => (b > a ? b : a)) : firstIn;
-                        const key = `${name}-${dateStr}`;
+                        const key = `${matchedFullName.toLowerCase()}-${dateStr}`;
                         let shiftName = (firstIn >= '11:00') ? 'Shift Siang' : 'Pagi';
                         const rule = shiftRules[shiftName];
                         let status = '';
@@ -302,7 +327,7 @@
                             weekday: 'long'
                         }) : 'Invalid';
                         attendance.set(key, {
-                            name: origName,
+                            name: matchedFullName,
                             department: dept,
                             day: dayName,
                             date: dateStr,
@@ -312,7 +337,7 @@
                             status
                         });
                     } else {
-                        unmatched.add(origName);
+                        unmatched.add(shortNameRaw);
                     }
                 }
                 const procData = Array.from(attendance.values());
@@ -338,9 +363,12 @@
                         }
                     });
                 });
+                // DIPERBARUI: Mengurutkan berdasarkan urutan daftar nama, lalu tanggal
                 allData = procData.sort((a, b) => {
-                    if (a.name < b.name) return -1;
-                    if (a.name > b.name) return 1;
+                    const indexA = origEmpNames.indexOf(a.name);
+                    const indexB = origEmpNames.indexOf(b.name);
+                    if (indexA < indexB) return -1;
+                    if (indexA > indexB) return 1;
                     return parseDt(a.date) - parseDt(b.date);
                 });
                 applyFilters();
@@ -351,7 +379,7 @@
                 } else {
                     showMsg('Tidak ada data yang cocok. Periksa Log Pemrosesan.', 'error');
                 }
-                dispDbgInfo(rawFpData.length - 1, empNameSet.size, unmatched, numericOrEmpty, procCount);
+                dispDbgInfo(rawFpData.length - 1, origEmpNames.length, unmatched, numericOrEmpty, procCount);
             } catch (error) {
                 console.error('Terjadi kesalahan saat memproses file:', error);
                 showMsg(`Terjadi kesalahan: ${error.message}`, 'error');
@@ -422,10 +450,13 @@
                         break;
                 }
             });
-            return Array.from(sumMap.entries()).map(([name, data]) => ({
-                name,
-                ...data
-            }));
+            // DIPERBARUI: Mengurutkan ringkasan sesuai urutan daftar nama
+            const sortedSummary = Array.from(sumMap.entries()).sort((a, b) => {
+                const originalOrder = Array.from(document.querySelectorAll('#employeeFilter option')).map(opt => opt.value);
+                return originalOrder.indexOf(a[0]) - originalOrder.indexOf(b[0]);
+            }).map(([name, data]) => ({ name, ...data }));
+
+            return sortedSummary;
         }
 
         function updDashCards(sumData) {
@@ -433,7 +464,7 @@
             const totalHadir = sumData.reduce((acc, cur) => acc + cur.totalMasuk, 0);
             const totalTerlambat = sumData.reduce((acc, cur) => acc + cur.terlambat, 0);
             const totalPulangCepat = sumData.reduce((acc, cur) => acc + cur.pulangCepat, 0);
-            dashArea.innerHTML = `<div class="summary-card"><div class="icon bg-blue-100 text-blue-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg></div><div><p class="text-gray-500 text-sm">Karyawan Aktif</p><p class="text-2xl font-bold">${totalEmp}</p></div></div><div class="summary-card"><div class="icon bg-green-100 text-green-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg></div><div><p class="text-gray-500 text-sm">Total Kehadiran</p><p class="text-2xl font-bold">${totalHadir}</p></div></div><div class="summary-card"><div class="icon bg-red-100 text-red-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div><div><p class="text-gray-500 text-sm">Total Terlambat</p><p class="text-2xl font-bold">${totalTerlambat}</p></div></div><div class="summary-card"><div class="icon bg-yellow-100 text-yellow-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div><div><p class="text-gray-500 text-sm">Total Pulang Cepat</p><p class="text-2xl font-bold">${totalPulangCepat}</p></div></div>`;
+            dashArea.innerHTML = `<div class="summary-card"><div class="icon bg-blue-100 text-blue-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283-.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg></div><div><p class="text-gray-500 text-sm">Karyawan Aktif</p><p class="text-2xl font-bold">${totalEmp}</p></div></div><div class="summary-card"><div class="icon bg-green-100 text-green-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg></div><div><p class="text-gray-500 text-sm">Total Kehadiran</p><p class="text-2xl font-bold">${totalHadir}</p></div></div><div class="summary-card"><div class="icon bg-red-100 text-red-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div><div><p class="text-gray-500 text-sm">Total Terlambat</p><p class="text-2xl font-bold">${totalTerlambat}</p></div></div><div class="summary-card"><div class="icon bg-yellow-100 text-yellow-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div><div><p class="text-gray-500 text-sm">Total Pulang Cepat</p><p class="text-2xl font-bold">${totalPulangCepat}</p></div></div>`;
         }
 
         function dispSummary(sumData) {
