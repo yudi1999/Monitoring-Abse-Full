@@ -493,7 +493,7 @@
         }
 
         async function exportCSV(isDetail) {
-            showMsg('Mempersiapkan file ZIP...', 'info');
+            showMsg('Mempersiapkan file ZIP...', 'info'); // Pesan diubah kembali ke ZIP
             const selEmps = Array.from(empFilter.selectedOptions).map(opt => opt.value);
             const selDepts = Array.from(deptFilter.selectedOptions).map(opt => opt.value);
             const startDate = startFilter.value;
@@ -509,32 +509,111 @@
             });
             
             if (isDetail) {
+                // --- LOGIKA BARU: ZIP -> FOLDER DEPT -> FILE EXCEL PER KARYAWAN -> SHEET PER BULAN ---
+                
+                // 1. Inisialisasi ZIP
                 const zip = new JSZip();
+                const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+                // 2. Mengelompokkan data berdasarkan DEPARTEMEN
                 const dataByDept = {};
                 baseData.forEach(row => {
-                    if (!dataByDept[row.department]) dataByDept[row.department] = [];
-                    dataByDept[row.department].push(row);
+                    const dept = row.department || 'N/A';
+                    if (!dataByDept[dept]) {
+                        dataByDept[dept] = [];
+                    }
+                    dataByDept[dept].push(row);
                 });
 
-                for (const dept in dataByDept) {
-                    const headers = ['name', 'department', 'day', 'date', 'shift', 'firstIn', 'lastOut', 'status'];
-                    let csvContent = headers.join(',') + '\n';
-                    dataByDept[dept].forEach(row => {
-                        csvContent += headers.map(header => `"${(row[header] || '').toString().replace(/"/g, '""')}"`).join(',') + '\n';
+                // 3. Looping untuk setiap DEPARTEMEN
+                for (const deptName in dataByDept) {
+                    const deptData = dataByDept[deptName];
+                    // Membuat nama folder yang aman, lalu buat folder di ZIP
+                    const safeDeptName = deptName.replace(/[^a-z0-9 ]/gi, '').replace(/ /g, '_') || 'Lainnya';
+                    const deptFolder = zip.folder(safeDeptName);
+
+                    // 4. Mengelompokkan data di departemen ini berdasarkan KARYAWAN
+                    const dataByEmployee = {};
+                    deptData.forEach(row => {
+                        if (!dataByEmployee[row.name]) {
+                            dataByEmployee[row.name] = [];
+                        }
+                        dataByEmployee[row.name].push(row);
                     });
-                    zip.file(`laporan_${dept.replace(/ /g, '_')}.csv`, csvContent);
+
+                    // 5. Looping untuk setiap KARYAWAN di departemen ini
+                    for (const employeeName in dataByEmployee) {
+                        const employeeData = dataByEmployee[employeeName];
+                        
+                        // 5a. Buat WORKBOOK baru untuk karyawan ini
+                        const wb = XLSX.utils.book_new();
+                        
+                        // 5b. Kelompokkan data karyawan ini berdasarkan BULAN
+                        const dataByMonth = {};
+                        employeeData.forEach(row => {
+                            const dateObj = parseDt(row.date);
+                            if (isNaN(dateObj.getTime())) return;
+                            const monthIndex = dateObj.getMonth();
+                            const monthName = monthNames[monthIndex];
+                            const year = dateObj.getFullYear();
+                            const sheetName = `${monthName} ${year}`; // cth: "Oktober 2025"
+
+                            if (!dataByMonth[sheetName]) {
+                                dataByMonth[sheetName] = [];
+                            }
+                            dataByMonth[sheetName].push(row);
+                        });
+
+                        // 5c. Sortir nama sheet (bulan) secara kronologis
+                        const sortedSheetNames = Object.keys(dataByMonth).sort((a, b) => {
+                            const [monthA, yearA] = a.split(' ');
+                            const [monthB, yearB] = b.split(' ');
+                            const dateA = new Date(parseInt(yearA), monthNames.indexOf(monthA), 1);
+                            const dateB = new Date(parseInt(yearB), monthNames.indexOf(monthB), 1);
+                            return dateA - dateB;
+                        });
+
+                        // 5d. Looping untuk setiap BULAN, buat SHEET
+                        for (const sheetName of sortedSheetNames) {
+                            const rows = dataByMonth[sheetName];
+                            // Mempersiapkan data JSON untuk sheet
+                            const sheetData = rows.map(row => ({
+                                'Nama': row.name,
+                                'Departemen': row.department,
+                                'Hari': row.day,
+                                'Tanggal': row.date,
+                                'Shift': row.shift,
+                                'Masuk': row.firstIn,
+                                'Keluar': ' ' + row.lastOut, // Tambah spasi agar Excel tidak auto-format
+                                'Keterangan': row.status
+                            }));
+                            
+                            const ws = XLSX.utils.json_to_sheet(sheetData);
+                            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                        }
+
+                        // 6. Hasilkan file .xlsx (sebagai array buffer) untuk karyawan ini
+                        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                        
+                        // 7. Tambahkan file .xlsx ini ke FOLDER DEPT di ZIP
+                        const safeFilename = employeeName.replace(/[^a-z0-9 ]/gi, '').replace(/ /g, '_');
+                        deptFolder.file(`${safeFilename}.xlsx`, wbout); // Menambahkan file ke folder departemen
+                    }
                 }
-                
+
+                // 8. Hasilkan file ZIP dan picu unduhan
                 const content = await zip.generateAsync({ type: "blob" });
                 const url = window.URL.createObjectURL(content);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'laporan_detail_per_departemen.zip';
+                a.download = 'laporan_detail_per_karyawan.zip';
                 a.click();
                 window.URL.revokeObjectURL(url);
-                showMsg('File ZIP berhasil diunduh!', 'success');
+                showMsg('File ZIP (Dept > Karyawan > Bulan) berhasil diunduh!', 'success');
+                // --- AKHIR LOGIKA BARU ---
 
             } else {
+                // Logika untuk ekspor ringkasan (tetap sebagai CSV)
                 const dataToExport = procSumData(baseData);
                 const headers = ['name', 'department', 'totalMasuk', 'off', 'tepatWaktu', 'terlambat', 'pulangCepat', 'loyalitas'];
                 const filename = 'laporan_ringkasan_karyawan.csv';
